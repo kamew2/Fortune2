@@ -163,6 +163,51 @@ html, body {
 .btn-icon { transition: transform 0.35s ease; flex-shrink: 0; }
 .btn-refresh:active .btn-icon { transform: rotate(-180deg); }
 
+/* Speed Controller */
+.speed-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.speed-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.speed-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 7px 28px 7px 12px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237b7fa8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")
+    no-repeat right 10px center,
+    var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  min-width: 108px;
+}
+
+.speed-select:hover {
+  border-color: var(--border-bright);
+}
+
+.speed-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.22);
+}
+
 /* ─── Legend Bar ───────────────────────────────────── */
 .legend-bar {
   width: 100%;

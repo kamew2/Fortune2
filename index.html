@@ -41,6 +41,16 @@
           <span class="stat-label">Cells</span>
           <span class="stat-value">800</span>
         </div>
+        <!-- Speed Controller -->
+        <div class="speed-group">
+          <span class="speed-label">Speed</span>
+          <select id="speed-select" class="speed-select" title="애니메이션 속도 조절">
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="5">5×</option>
+            <option value="instant">⚡ Instant</option>
+          </select>
+        </div>
         <button class="btn-refresh" id="btn-refresh" title="맵 새로고침 (R)">
           <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
                stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -56,7 +66,7 @@
     <div class="legend-bar">
       <div class="legend-item">
         <span class="legend-dot start"></span>
-        <span>출발점 (2, 2)</span>
+        <span>출발점 (우클릭으로 이동)</span>
       </div>
       <div class="legend-item">
         <span class="legend-dot end"></span>
@@ -90,7 +100,7 @@
 
     <!-- Footer -->
     <footer class="app-footer">
-      <span>Press <kbd>R</kbd> to refresh · Click grid to find path</span>
+      <span>Press <kbd>R</kbd> to refresh · <kbd>L-Click</kbd> End · <kbd>R-Click</kbd> Start · <kbd>Drag</kbd> Walls</span>
       <span class="footer-sep">·</span>
       <span id="footer-status">맵 초기화 완료</span>
     </footer>
