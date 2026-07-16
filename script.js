@@ -72,10 +72,8 @@ let activeFades  = [];
 let lastStepTime = 0; // 슬로우 모드용 타임스탬프
 
 // ── Rainbow 색상 시스템 ──────────────────────────────
-// visitOrderGrid : 각 셀이 몇 번째로 방문됐는지 기록 (Uint16, max 800)
-// visitedTotal   : visitedSeq.length — hue 정규화 기준
-let visitOrderGrid = null;
-let visitedTotal   = 0;
+// visitCountGrid : 각 셀이 몇 번 지나갔는지 기록 (Uint8Array, max 255)
+let visitCountGrid = null;
 
 // ════════════════════════════════════════════════════
 //  Drag State  (L-Click 드래그 → 벽 토글)
@@ -123,22 +121,26 @@ const COLOR = {
 // ════════════════════════════════════════════════════
 
 /**
- * 방문 순서 인덱스 → HSL Hue (0→300)
- * 0   = 빨강(Red)
- * 60  = 노랑(Yellow)
- * 120 = 초록(Green)
- * 180 = 청록(Cyan)
- * 240 = 파랑(Blue)
- * 300 = 보라(Violet)
+ * 방문 횟수(Visit Count) → HSL Hue
+ * 1번: 빨강 (0)
+ * 2번: 주황 (30)
+ * 3번: 노랑 (60)
+ * 4번: 초록 (120)
+ * 5번: 파랑 (240)
+ * 6번 이상: 보라 (300)
  */
-function visitHue(orderIdx) {
-  if (!visitedTotal) return 240;
-  return (orderIdx / visitedTotal) * 300;
+function visitHue(count) {
+  if (count <= 1) return 0;
+  if (count === 2) return 30;
+  if (count === 3) return 60;
+  if (count === 4) return 120;
+  if (count === 5) return 240;
+  return 300;
 }
 
 /** hue → 셀 베이스 색상 문자열 */
 function visitColor(hue) {
-  return `hsl(${hue.toFixed(1)}, 72%, 32%)`;
+  return `hsl(${hue.toFixed(1)}, 70%, 42%)`;
 }
 
 // ════════════════════════════════════════════════════
@@ -208,6 +210,9 @@ function runAStar(sc, sr, ec, er) {
   const inClosed = new Uint8Array(ROWS * COLS);
   const visited  = [];
   const open     = [];
+  
+  // 셀별 총 방문/지나간 횟수 기록
+  const visitCounts = new Uint8Array(ROWS * COLS);
 
   const sk = key(sc, sr);
   gScore[sk] = 0;
@@ -224,12 +229,18 @@ function runAStar(sc, sr, ec, er) {
     inOpen[cur.k]   = 0;
     inClosed[cur.k] = 1;
     visited.push({ col: cur.c, row: cur.r });
+    
+    // 알고리즘이 탐색을 진행하며 closed 될 때 카운트 증가
+    visitCounts[cur.k]++;
 
     if (cur.c === ec && cur.r === er) {
       const path = [];
-      for (let k = cur.k; k !== -1; k = cameFrom[k])
+      for (let k = cur.k; k !== -1; k = cameFrom[k]) {
         path.push({ col: k % COLS, row: Math.floor(k / COLS) });
-      return { visitedSeq: visited, pathSeq: path.reverse() };
+        // 최적 경로상에 있는 셀들도 지나간 횟수 증가
+        visitCounts[k]++;
+      }
+      return { visitedSeq: visited, pathSeq: path.reverse(), visitCounts };
     }
 
     for (const [dc, dr] of DIRS) {
@@ -238,6 +249,10 @@ function runAStar(sc, sr, ec, er) {
       if (grid[nr][nc] === CELL.WALL) continue;
 
       const nk = key(nc, nr);
+      
+      // 알고리즘 탐색 과정에서 neighbor 로 평가(지나감)될 때 카운트 증가
+      visitCounts[nk]++;
+
       if (inClosed[nk]) continue;
 
       const ng = gScore[cur.k] + 1;
@@ -255,7 +270,7 @@ function runAStar(sc, sr, ec, er) {
     }
   }
 
-  return { visitedSeq: visited, pathSeq: null };
+  return { visitedSeq: visited, pathSeq: null, visitCounts };
 }
 
 // ════════════════════════════════════════════════════
@@ -277,8 +292,7 @@ function stopAnimation() {
   pathIdx        = 0;
   activeFades    = [];
   lastStepTime   = 0;
-  visitOrderGrid = null;
-  visitedTotal   = 0;
+  visitCountGrid = null;
 }
 
 /** Instant 모드: RAF 없이 즉시 최종 상태 렌더 */
@@ -287,7 +301,6 @@ function applyInstant(vSeq, pSeq) {
     const { col, row } = vSeq[i];
     if (grid[row][col] === CELL.EMPTY) {
       grid[row][col] = CELL.VISITED;
-      if (visitOrderGrid) visitOrderGrid[row * COLS + col] = i;
     }
   }
 
@@ -329,16 +342,14 @@ function animLoop(now) {
       const end = Math.min(visitIdx + spd.visitPerStep, visitedSeq.length);
       while (visitIdx < end) {
         const { col, row } = visitedSeq[visitIdx];
-        const orderIdx     = visitIdx; // 방문 순서 캡처 (무지개 색상용)
         visitIdx++;
 
         if (grid[row][col] === CELL.EMPTY) {
           grid[row][col] = CELL.VISITED;
-          // 방문 순서 기록
-          if (visitOrderGrid) visitOrderGrid[row * COLS + col] = orderIdx;
 
           if (spd.visitFade > 0) {
-            const hue = visitHue(orderIdx);
+            const count = (visitCountGrid && visitCountGrid[row * COLS + col]) || 1;
+            const hue   = visitHue(count);
             activeFades.push({ col, row, startTime: now, type: 'visited', hue });
           }
         }
@@ -554,10 +565,10 @@ function drawCell(x, y, size, row, col, type) {
       break;
     }
 
-    /* ── 탐색 영역: 무지개 HSL (방문 순서 → hue 0~300) */
+    /* ── 탐색 영역: 방문 횟수 기준 무지개/히트맵 색상 ── */
     case CELL.VISITED: {
-      const orderIdx = (visitOrderGrid && visitOrderGrid[row * COLS + col]) || 0;
-      const hue      = visitHue(orderIdx);
+      const count = (visitCountGrid && visitCountGrid[row * COLS + col]) || 1;
+      const hue   = visitHue(count);
       ctx.fillStyle  = visitColor(hue);
       ctx.fillRect(x, y, size, size);
       // 상단·좌측 하이라이트 (입체감)
@@ -645,9 +656,8 @@ function triggerSearch(col, row) {
   visitIdx     = 0;
   pathIdx      = 0;
 
-  // 무지개 색상 시스템 초기화
-  visitedTotal   = visitedSeq.length;
-  visitOrderGrid = new Uint16Array(ROWS * COLS); // 0으로 초기화됨
+  // 방문 횟수 그리드 저장
+  visitCountGrid = result.visitCounts;
 
   if (speedKey === 'instant') {
     applyInstant(visitedSeq, pathSeq);
