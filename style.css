@@ -237,7 +237,12 @@ html, body {
 .legend-dot.start   { background: var(--cell-start);   box-shadow: 0 0 8px rgba(34,211,238,0.7); }
 .legend-dot.end     { background: var(--cell-end);     box-shadow: 0 0 8px rgba(245,158,11,0.7); }
 .legend-dot.wall    { background: var(--cell-wall-face); box-shadow: 0 0 5px rgba(79,82,160,0.5); }
-.legend-dot.visited { background: var(--cell-visited); box-shadow: 0 0 6px rgba(45,52,148,0.7); }
+.legend-dot.visited {
+  background: linear-gradient(to right,
+    hsl(0,72%,32%), hsl(60,72%,32%), hsl(120,72%,32%),
+    hsl(180,72%,32%), hsl(240,72%,32%), hsl(300,72%,32%));
+  box-shadow: 0 0 7px rgba(120,80,200,0.5);
+}
 .legend-dot.path    { background: var(--cell-path);    box-shadow: 0 0 6px rgba(132,204,22,0.6); }
 .legend-dot.empty   { background: var(--cell-empty);   border: 1px solid var(--border); }
 

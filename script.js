@@ -9,7 +9,8 @@
    Click → A*(sync) → [VISITING phase] → [PATHING phase] → DONE
    Right-Click  → Move Start Node
    L-Drag       → Toggle Walls
-   Speed Select → 1x / 2x / 5x / Instant
+   Speed Select → 0.1x / 0.3x / 0.5x / 1x / 2x / 5x / Instant
+   Visited      → Rainbow HSL (탐색 순서 기반 무지개 색상)
    ════════════════════════════════════════════════════ */
 
 'use strict';
@@ -28,12 +29,17 @@ let startRow = 2;
 
 // ════════════════════════════════════════════════════
 //  Speed Config
+//  msPerStep > 0  → 슬로우 모드: N ms 경과 시 1스텝
+//  msPerStep = 0  → 일반 모드: 매 프레임 visitPerStep 셀 처리
 // ════════════════════════════════════════════════════
 const SPEED_PRESETS = {
-  '1':       { visitPerFrame:  4, pathPerFrame: 1, visitFade: 280, pathFade: 180 },
-  '2':       { visitPerFrame: 10, pathPerFrame: 2, visitFade: 150, pathFade:  90 },
-  '5':       { visitPerFrame: 30, pathPerFrame: 4, visitFade:  70, pathFade:  40 },
-  'instant': { visitPerFrame: Infinity, pathPerFrame: Infinity, visitFade: 0, pathFade: 0 },
+  '0.1':     { visitPerStep:  1, pathPerStep: 1, visitFade: 500, pathFade: 300, msPerStep: 200 },
+  '0.3':     { visitPerStep:  1, pathPerStep: 1, visitFade: 300, pathFade: 200, msPerStep:  66 },
+  '0.5':     { visitPerStep:  1, pathPerStep: 1, visitFade: 200, pathFade: 140, msPerStep:  33 },
+  '1':       { visitPerStep:  4, pathPerStep: 1, visitFade: 280, pathFade: 180, msPerStep:   0 },
+  '2':       { visitPerStep: 10, pathPerStep: 2, visitFade: 150, pathFade:  90, msPerStep:   0 },
+  '5':       { visitPerStep: 30, pathPerStep: 4, visitFade:  70, pathFade:  40, msPerStep:   0 },
+  'instant': { visitPerStep: Infinity, pathPerStep: Infinity, visitFade: 0, pathFade: 0, msPerStep: 0 },
 };
 
 let speedKey = '1';
@@ -56,21 +62,28 @@ const CELL = Object.freeze({
 // ════════════════════════════════════════════════════
 const ANIM = Object.freeze({ IDLE: 0, VISITING: 1, PATHING: 2, DONE: 3 });
 
-let animState   = ANIM.IDLE;
-let animFrameId = null;
-let visitedSeq  = [];
-let pathSeq     = null;
-let visitIdx    = 0;
-let pathIdx     = 0;
-let activeFades = [];
+let animState    = ANIM.IDLE;
+let animFrameId  = null;
+let visitedSeq   = [];
+let pathSeq      = null;
+let visitIdx     = 0;
+let pathIdx      = 0;
+let activeFades  = [];
+let lastStepTime = 0; // 슬로우 모드용 타임스탬프
+
+// ── Rainbow 색상 시스템 ──────────────────────────────
+// visitOrderGrid : 각 셀이 몇 번째로 방문됐는지 기록 (Uint16, max 800)
+// visitedTotal   : visitedSeq.length — hue 정규화 기준
+let visitOrderGrid = null;
+let visitedTotal   = 0;
 
 // ════════════════════════════════════════════════════
 //  Drag State  (L-Click 드래그 → 벽 토글)
 // ════════════════════════════════════════════════════
-let isDragging   = false;  // 마우스 누른 상태
-let hasDragged   = false;  // 다른 셀로 이동했는지 여부
+let isDragging   = false;
+let hasDragged   = false;
 let dragMode     = null;   // 'add' | 'remove'
-let lastDragCell = null;   // 마지막으로 처리한 셀 { col, row }
+let lastDragCell = null;   // { col, row }
 
 // ════════════════════════════════════════════════════
 //  Grid State
@@ -102,9 +115,31 @@ const COLOR = {
   start:    cv.getPropertyValue('--cell-start').trim()    || '#22d3ee',
   end:      cv.getPropertyValue('--cell-end').trim()      || '#f59e0b',
   path:     cv.getPropertyValue('--cell-path').trim()     || '#84cc16',
-  visited:  cv.getPropertyValue('--cell-visited').trim()  || '#2d3494',
   gridLine: cv.getPropertyValue('--cell-grid-line').trim()|| 'rgba(99,102,241,0.09)',
 };
+
+// ════════════════════════════════════════════════════
+//  Rainbow Hue System
+// ════════════════════════════════════════════════════
+
+/**
+ * 방문 순서 인덱스 → HSL Hue (0→300)
+ * 0   = 빨강(Red)
+ * 60  = 노랑(Yellow)
+ * 120 = 초록(Green)
+ * 180 = 청록(Cyan)
+ * 240 = 파랑(Blue)
+ * 300 = 보라(Violet)
+ */
+function visitHue(orderIdx) {
+  if (!visitedTotal) return 240;
+  return (orderIdx / visitedTotal) * 300;
+}
+
+/** hue → 셀 베이스 색상 문자열 */
+function visitColor(hue) {
+  return `hsl(${hue.toFixed(1)}, 72%, 32%)`;
+}
 
 // ════════════════════════════════════════════════════
 //  Canvas & Grid Init
@@ -121,7 +156,7 @@ function resizeCanvas() {
   return cell;
 }
 
-/** Fisher-Yates 셔플로 25% 랜덤 장애물 배치 (startCol/startRow는 맵 새로고침에도 유지) */
+/** Fisher-Yates 셔플로 25% 랜덤 장애물 배치 (startCol/startRow 유지) */
 function initGrid() {
   const wallTarget = Math.round(ROWS * COLS * WALL_RATIO);
   grid = Array.from({ length: ROWS }, () => new Uint8Array(COLS));
@@ -140,7 +175,7 @@ function initGrid() {
   return wallTarget;
 }
 
-/** VISITED · PATH · END 셀을 EMPTY로 되돌린다 */
+/** VISITED · PATH · END 셀 → EMPTY */
 function clearPathState() {
   for (let r = 0; r < ROWS; r++)
     for (let c = 0; c < COLS; c++) {
@@ -150,7 +185,6 @@ function clearPathState() {
     }
 }
 
-/** 현재 그리드의 장애물 수 카운트 */
 function countWalls() {
   let w = 0;
   for (let r = 0; r < ROWS; r++)
@@ -236,18 +270,26 @@ function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
 function stopAnimation() {
   if (animFrameId !== null) { cancelAnimationFrame(animFrameId); animFrameId = null; }
-  animState   = ANIM.IDLE;
-  visitedSeq  = [];
-  pathSeq     = null;
-  visitIdx    = 0;
-  pathIdx     = 0;
-  activeFades = [];
+  animState      = ANIM.IDLE;
+  visitedSeq     = [];
+  pathSeq        = null;
+  visitIdx       = 0;
+  pathIdx        = 0;
+  activeFades    = [];
+  lastStepTime   = 0;
+  visitOrderGrid = null;
+  visitedTotal   = 0;
 }
 
-/** Instant 모드: RAF 없이 즉시 결과 렌더 */
+/** Instant 모드: RAF 없이 즉시 최종 상태 렌더 */
 function applyInstant(vSeq, pSeq) {
-  for (const { col, row } of vSeq)
-    if (grid[row][col] === CELL.EMPTY) grid[row][col] = CELL.VISITED;
+  for (let i = 0; i < vSeq.length; i++) {
+    const { col, row } = vSeq[i];
+    if (grid[row][col] === CELL.EMPTY) {
+      grid[row][col] = CELL.VISITED;
+      if (visitOrderGrid) visitOrderGrid[row * COLS + col] = i;
+    }
+  }
 
   if (!pSeq) {
     render(cellSize);
@@ -268,18 +310,38 @@ function applyInstant(vSeq, pSeq) {
   showToast(`✓ 최단 경로: ${pSeq.length - 1}칸`, 2800, true);
 }
 
+/**
+ * 메인 애니메이션 루프
+ * 슬로우 모드(msPerStep > 0): 경과 시간이 msPerStep 이상일 때만 다음 스텝 진행
+ * 일반/고속 모드(msPerStep = 0): 매 프레임 visitPerStep 만큼 처리
+ */
 function animLoop(now) {
   const spd = getSpeed();
 
   /* ── Phase 1: 방문 셀 순차 공개 ───────────────────── */
   if (animState === ANIM.VISITING) {
-    const end = Math.min(visitIdx + spd.visitPerFrame, visitedSeq.length);
-    while (visitIdx < end) {
-      const { col, row } = visitedSeq[visitIdx++];
-      if (grid[row][col] === CELL.EMPTY) {
-        grid[row][col] = CELL.VISITED;
-        if (spd.visitFade > 0)
-          activeFades.push({ col, row, startTime: now, type: 'visited' });
+    // 슬로우 모드 타임게이트
+    const canStep = spd.msPerStep === 0 || (now - lastStepTime) >= spd.msPerStep;
+
+    if (canStep && visitIdx < visitedSeq.length) {
+      if (spd.msPerStep > 0) lastStepTime = now;
+
+      const end = Math.min(visitIdx + spd.visitPerStep, visitedSeq.length);
+      while (visitIdx < end) {
+        const { col, row } = visitedSeq[visitIdx];
+        const orderIdx     = visitIdx; // 방문 순서 캡처 (무지개 색상용)
+        visitIdx++;
+
+        if (grid[row][col] === CELL.EMPTY) {
+          grid[row][col] = CELL.VISITED;
+          // 방문 순서 기록
+          if (visitOrderGrid) visitOrderGrid[row * COLS + col] = orderIdx;
+
+          if (spd.visitFade > 0) {
+            const hue = visitHue(orderIdx);
+            activeFades.push({ col, row, startTime: now, type: 'visited', hue });
+          }
+        }
       }
     }
 
@@ -295,8 +357,9 @@ function animLoop(now) {
           setStatus('경로 없음 — 다른 위치를 클릭해보세요');
           return;
         }
-        activeFades = activeFades.filter(f => f.type !== 'visited');
-        animState   = ANIM.PATHING;
+        activeFades  = activeFades.filter(f => f.type !== 'visited');
+        animState    = ANIM.PATHING;
+        lastStepTime = 0; // 경로 단계 타이머 리셋
         setStatus('경로 추적 중...');
       }
     }
@@ -304,14 +367,20 @@ function animLoop(now) {
 
   /* ── Phase 2: 최적 경로 순차 공개 ─────────────────── */
   if (animState === ANIM.PATHING) {
-    const end = Math.min(pathIdx + spd.pathPerFrame, pathSeq.length);
-    while (pathIdx < end) {
-      const { col, row } = pathSeq[pathIdx++];
-      const t = grid[row][col];
-      if (t !== CELL.START && t !== CELL.END) {
-        grid[row][col] = CELL.PATH;
-        if (spd.pathFade > 0)
-          activeFades.push({ col, row, startTime: now, type: 'path' });
+    const canStep = spd.msPerStep === 0 || (now - lastStepTime) >= spd.msPerStep;
+
+    if (canStep && pathIdx < pathSeq.length) {
+      if (spd.msPerStep > 0) lastStepTime = now;
+
+      const end = Math.min(pathIdx + spd.pathPerStep, pathSeq.length);
+      while (pathIdx < end) {
+        const { col, row } = pathSeq[pathIdx++];
+        const t = grid[row][col];
+        if (t !== CELL.START && t !== CELL.END) {
+          grid[row][col] = CELL.PATH;
+          if (spd.pathFade > 0)
+            activeFades.push({ col, row, startTime: now, type: 'path' });
+        }
       }
     }
 
@@ -343,52 +412,69 @@ function renderFrame(now) {
   const spd = getSpeed();
   render(cellSize);
 
+  // 만료된 페이드 제거
   activeFades = activeFades.filter(f => {
     const dur = f.type === 'path' ? spd.pathFade : spd.visitFade;
     return dur > 0 && (now - f.startTime) < dur;
   });
 
+  // 활성 페이드 오버레이 렌더링
   for (const fade of activeFades) {
     const elapsed = now - fade.startTime;
     const dur     = fade.type === 'path' ? spd.pathFade : spd.visitFade;
     const t       = Math.min(elapsed / dur, 1);
     const x = CELL_GAP + fade.col * (cellSize + CELL_GAP);
     const y = CELL_GAP + fade.row * (cellSize + CELL_GAP);
-    if (fade.type === 'visited') drawVisitedFade(x, y, cellSize, t);
+    if (fade.type === 'visited') drawVisitedFade(x, y, cellSize, t, fade.hue ?? 240);
     else                         drawPathFade(x, y, cellSize, t);
   }
 }
 
-function drawVisitedFade(x, y, size, t) {
+/**
+ * 방문 셀 페이드-인: 해당 셀의 hue 색상으로 밝은 플래시 → 고정 색 착지
+ * @param {number} hue - visitHue(orderIdx) 로 계산된 색상
+ */
+function drawVisitedFade(x, y, size, t, hue) {
   const ease  = easeOutCubic(t);
   const alpha = Math.max(0, 1 - ease);
+
   ctx.save();
-  ctx.globalAlpha = alpha * 0.72;
-  ctx.fillStyle   = '#818cf8';
+  // 밝은 플래시 (해당 hue 고채도)
+  ctx.globalAlpha = alpha * 0.78;
+  ctx.fillStyle   = `hsl(${hue.toFixed(1)}, 90%, 66%)`;
   ctx.fillRect(x, y, size, size);
+
+  // 방사형 글로우
   const grad = ctx.createRadialGradient(
     x + size / 2, y + size / 2, 0,
-    x + size / 2, y + size / 2, size * 0.7
+    x + size / 2, y + size / 2, size * 0.78
   );
-  grad.addColorStop(0, `rgba(129,140,248,${alpha * 0.6})`);
-  grad.addColorStop(1, 'rgba(129,140,248,0)');
+  grad.addColorStop(0, `hsla(${hue.toFixed(1)}, 90%, 62%, ${alpha * 0.65})`);
+  grad.addColorStop(1, `hsla(${hue.toFixed(1)}, 90%, 62%, 0)`);
   ctx.fillStyle = grad;
   ctx.fillRect(x, y, size, size);
+
   ctx.restore();
 }
 
+/**
+ * 경로 셀 페이드-인: 화이트 플래시 → 라임 그린 착지 + 스케일 펄스
+ */
 function drawPathFade(x, y, size, t) {
   const ease  = easeOutCubic(t);
   const alpha = Math.max(0, 1 - ease);
+
   ctx.save();
   const scale = 1 + (1 - ease) * 0.35;
   const cx = x + size / 2, cy = y + size / 2;
   ctx.translate(cx, cy);
   ctx.scale(scale, scale);
   ctx.translate(-cx, -cy);
+
   ctx.globalAlpha = alpha * 0.85;
   ctx.fillStyle   = '#ffffff';
   ctx.fillRect(x, y, size, size);
+
   const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.9);
   grad.addColorStop(0,   `rgba(132,204,22,${alpha * 0.5})`);
   grad.addColorStop(0.6, `rgba(132,204,22,${alpha * 0.25})`);
@@ -396,13 +482,16 @@ function drawPathFade(x, y, size, t) {
   ctx.fillStyle   = grad;
   ctx.globalAlpha = alpha;
   ctx.fillRect(x - size * 0.2, y - size * 0.2, size * 1.4, size * 1.4);
+
   ctx.restore();
 }
 
+/** 전체 그리드 정적 렌더링 */
 function render(cs) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = COLOR.gridLine;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
   for (let r = 0; r < ROWS; r++)
     for (let c = 0; c < COLS; c++)
       drawCell(
@@ -465,11 +554,14 @@ function drawCell(x, y, size, row, col, type) {
       break;
     }
 
-    /* ── 탐색 영역: 인디고 블루 ─────────────────────── */
+    /* ── 탐색 영역: 무지개 HSL (방문 순서 → hue 0~300) */
     case CELL.VISITED: {
-      ctx.fillStyle = COLOR.visited;
+      const orderIdx = (visitOrderGrid && visitOrderGrid[row * COLS + col]) || 0;
+      const hue      = visitHue(orderIdx);
+      ctx.fillStyle  = visitColor(hue);
       ctx.fillRect(x, y, size, size);
-      ctx.fillStyle = 'rgba(99,102,241,0.18)';
+      // 상단·좌측 하이라이트 (입체감)
+      ctx.fillStyle = `hsla(${hue.toFixed(1)}, 80%, 62%, 0.18)`;
       ctx.fillRect(x, y, size, 1);
       ctx.fillRect(x, y, 1, size);
       break;
@@ -537,9 +629,9 @@ function isValidCell(col, row) {
 // ════════════════════════════════════════════════════
 
 function triggerSearch(col, row) {
-  if (!isValidCell(col, row)) return;
-  if (grid[row][col] === CELL.WALL)                    return;
-  if (row === startRow && col === startCol)             return;
+  if (!isValidCell(col, row))               return;
+  if (grid[row][col] === CELL.WALL)         return;
+  if (row === startRow && col === startCol) return;
 
   stopAnimation();
   clearPathState();
@@ -553,6 +645,10 @@ function triggerSearch(col, row) {
   visitIdx     = 0;
   pathIdx      = 0;
 
+  // 무지개 색상 시스템 초기화
+  visitedTotal   = visitedSeq.length;
+  visitOrderGrid = new Uint16Array(ROWS * COLS); // 0으로 초기화됨
+
   if (speedKey === 'instant') {
     applyInstant(visitedSeq, pathSeq);
   } else {
@@ -563,38 +659,31 @@ function triggerSearch(col, row) {
 
 // ════════════════════════════════════════════════════
 //  Mouse Events — L-Click / Drag
-//  · mousedown  : 드래그 준비, dragMode 결정
-//  · mousemove  : 첫 셀 이탈 시 드래그 확정 → 벽 토글
-//  · mouseup    : hasDragged=false → 클릭(목적지) / true → 벽 편집 완료
+//  mousedown  → 드래그 준비, dragMode 결정
+//  mousemove  → 첫 셀 이탈 시 드래그 확정 → 벽 토글
+//  mouseup    → hasDragged=false: 클릭(목적지) / true: 벽 편집 완료
 // ════════════════════════════════════════════════════
 
 canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
-
   const { col, row } = pixelToCell(e.clientX, e.clientY);
   if (!isValidCell(col, row)) return;
 
   isDragging   = true;
   hasDragged   = false;
   lastDragCell = { col, row };
-
-  // 시작 셀 타입에 따라 드래그 모드 결정
-  dragMode = grid[row][col] === CELL.WALL ? 'remove' : 'add';
-
-  e.preventDefault(); // 텍스트 선택 방지
+  dragMode     = grid[row][col] === CELL.WALL ? 'remove' : 'add';
+  e.preventDefault();
 });
 
 canvas.addEventListener('mousemove', (e) => {
   if (!isDragging) return;
-
   const { col, row } = pixelToCell(e.clientX, e.clientY);
   if (!isValidCell(col, row)) return;
   if (lastDragCell && lastDragCell.col === col && lastDragCell.row === row) return;
 
-  // 새 셀 진입 → 드래그 확정
   if (!hasDragged) {
     hasDragged = true;
-    // 첫 드래그 시 애니메이션·경로 클리어
     stopAnimation();
     clearPathState();
     setStatus('벽 편집 중 — 마우스를 놓으면 완료');
@@ -602,7 +691,6 @@ canvas.addEventListener('mousemove', (e) => {
 
   lastDragCell = { col, row };
 
-  // START · END 셀은 보호
   const cellType = grid[row][col];
   if (cellType === CELL.START || cellType === CELL.END) return;
 
@@ -615,25 +703,21 @@ canvas.addEventListener('mousemove', (e) => {
   }
 });
 
-// canvas 안에서 mouseup
 canvas.addEventListener('mouseup', (e) => {
   if (e.button !== 0 || !isDragging) return;
   isDragging = false;
 
   if (!hasDragged) {
-    // 일반 클릭 → 목적지 지정
     const { col, row } = pixelToCell(e.clientX, e.clientY);
     triggerSearch(col, row);
   } else {
-    // 드래그 완료 → 벽 통계 갱신
     updateStats(countWalls());
     setStatus('벽 편집 완료 — 클릭: 경로 탐색 | 우클릭: 시작점 이동');
   }
-
   lastDragCell = null;
 });
 
-// canvas 밖에서도 mouseup 처리 (캔버스 이탈 후 버튼 놓은 경우)
+// 캔버스 이탈 후 mouseup
 window.addEventListener('mouseup', (e) => {
   if (e.button !== 0 || !isDragging) return;
   isDragging = false;
@@ -645,7 +729,6 @@ window.addEventListener('mouseup', (e) => {
   lastDragCell = null;
 });
 
-// 드래그 중 이미지 드래그 방지
 canvas.addEventListener('dragstart', (e) => e.preventDefault());
 
 // ════════════════════════════════════════════════════
@@ -653,20 +736,16 @@ canvas.addEventListener('dragstart', (e) => e.preventDefault());
 // ════════════════════════════════════════════════════
 
 canvas.addEventListener('contextmenu', (e) => {
-  e.preventDefault(); // 브라우저 기본 메뉴 차단
-
+  e.preventDefault();
   const { col, row } = pixelToCell(e.clientX, e.clientY);
-  if (!isValidCell(col, row))              return;
-  if (grid[row][col] === CELL.WALL)        return; // 벽 위 이동 불가
-  if (row === startRow && col === startCol) return; // 현재 시작점 재클릭 무시
+  if (!isValidCell(col, row))               return;
+  if (grid[row][col] === CELL.WALL)         return;
+  if (row === startRow && col === startCol) return;
 
   stopAnimation();
   clearPathState();
-
-  // 기존 START 셀 비우기
   grid[startRow][startCol] = CELL.EMPTY;
 
-  // 새 시작점 설정 (세션 유지 — F5 전까지 보존)
   startCol = col;
   startRow = row;
   grid[startRow][startCol] = CELL.START;
@@ -682,7 +761,6 @@ canvas.addEventListener('contextmenu', (e) => {
 
 speedSelect.addEventListener('change', () => {
   speedKey = speedSelect.value;
-  // 속도는 다음 탐색부터 즉시 적용 (진행 중 애니메이션에도 반영)
 });
 
 // ════════════════════════════════════════════════════
@@ -698,7 +776,7 @@ function refreshMap() {
   }, { once: true });
 
   const cell  = resizeCanvas();
-  const walls = initGrid(); // startCol/startRow 는 유지됨
+  const walls = initGrid(); // startCol/startRow 유지
   render(cell);
   updateStats(walls);
   setStatus('랜덤 맵 생성 완료 — 클릭: 도착점 | 우클릭: 시작점 이동 | 드래그: 벽 편집');
