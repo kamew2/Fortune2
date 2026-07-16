@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2D Grid Map — Pathfinding Visualizer</title>
+  <meta name="description" content="A* 알고리즘 실시간 시각화 — 방문 셀 애니메이션과 최단 경로 하이라이트를 지원하는 인터랙티브 2D 그리드 맵.">
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <div class="app-wrapper">
+
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-mark">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <rect x="2"  y="2"  width="8" height="8" rx="1.5" fill="#6366f1"/>
+            <rect x="14" y="2"  width="8" height="8" rx="1.5" fill="#6366f1" opacity="0.4"/>
+            <rect x="2"  y="14" width="8" height="8" rx="1.5" fill="#6366f1" opacity="0.4"/>
+            <rect x="14" y="14" width="8" height="8" rx="1.5" fill="#22d3ee"/>
+          </svg>
+        </div>
+        <div class="header-title-group">
+          <h1 class="app-title">Grid Map</h1>
+          <span class="app-subtitle">A* Pathfinding Visualizer</span>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <div class="stat-chip" id="stat-walls">
+          <span class="stat-icon">▪</span>
+          <span class="stat-label">Walls</span>
+          <span class="stat-value" id="wall-count">—</span>
+        </div>
+        <div class="stat-chip" id="stat-cells">
+          <span class="stat-icon">◦</span>
+          <span class="stat-label">Cells</span>
+          <span class="stat-value">800</span>
+        </div>
+        <button class="btn-refresh" id="btn-refresh" title="맵 새로고침 (R)">
+          <svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          맵 새로고침
+        </button>
+      </div>
+    </header>
+
+    <!-- Legend -->
+    <div class="legend-bar">
+      <div class="legend-item">
+        <span class="legend-dot start"></span>
+        <span>출발점 (2, 2)</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-dot end"></span>
+        <span>도착점 (클릭)</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-dot wall"></span>
+        <span>장애물</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-dot visited"></span>
+        <span>탐색 영역</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-dot path"></span>
+        <span>최단 경로</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-dot empty"></span>
+        <span>빈 공간</span>
+      </div>
+      <div class="legend-sep"></div>
+      <span class="legend-hint">Grid: 40 col × 20 row</span>
+    </div>
+
+    <!-- Canvas -->
+    <main class="canvas-container">
+      <canvas id="gridCanvas"></canvas>
+      <div class="canvas-glow"></div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span>Press <kbd>R</kbd> to refresh · Click grid to find path</span>
+      <span class="footer-sep">·</span>
+      <span id="footer-status">맵 초기화 완료</span>
+    </footer>
+
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
+
+  <script src="script.js"></script>
+</body>
+
+</html>
